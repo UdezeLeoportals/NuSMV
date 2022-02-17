@@ -1,0 +1,24 @@
+MODULE main
+VAR 
+  action: {insertcoin, tea, cola, gettea, getcola};
+  state: {idle,select, tea, cola};
+ASSIGN
+  init(state) := idle;
+  next(state) := case
+                   state = idle & action = insertcoin: select;
+			   state = select & action = cola : cola;
+			   state = select & action = tea : tea;
+			   state = tea & action = gettea: idle;
+			   state = cola & action = getcola: idle;
+                   TRUE : state;
+                 esac;
+ init(action) := insertcoin;
+ next(action) := case
+		state = idle : insertcoin;
+		state = select : {tea, cola};
+		state = tea : gettea;
+		state = cola : getcola;
+           esac;
+
+
+

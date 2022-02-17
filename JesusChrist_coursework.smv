@@ -1,0 +1,408 @@
+--Client A Process
+--can have a meesage from B removed by an intruder
+MODULE client(S_ack_A, 	B_ack_A)
+VAR
+  --state : {idle, send_S, receive_S, send_B, authenticated};
+  req_S : {null, req_keyAS, req_keyAB};
+  req_B : {null, init_B, send_dataA};
+  keyAS_recvd : boolean;
+  keyAB_recvd : boolean;
+  times : {0,1,2,3};
+  Sess_count : {0,1,2,3,4,5,6,7};
+  active : boolean;
+  begin_init_B : 0..21;
+  begin_res_B : 0..21;
+  receive_key_S : 0..21;
+  send_key_B : 0..21;
+  send_key_i : 0..21;
+DEFINE
+	sess_max := 3;
+	count_max := 21;
+ASSIGN
+
+init(req_S) := null;
+next(req_S) := case
+  req_S = null & !next(keyAS_recvd) 	: req_keyAS;
+  req_S = null & !next(keyAB_recvd) & Sess_count < sess_max  : req_keyAB;
+  req_S = null & !next(keyAB_recvd) & Sess_count = sess_max  : null;
+  req_S = req_keyAS & next(keyAS_recvd) & Sess_count < sess_max  : req_keyAB;
+  req_S = req_keyAS & next(keyAS_recvd) & Sess_count = sess_max  : null;
+  req_S = req_keyAB & next(keyAB_recvd) : null;
+  TRUE: req_S;
+esac;
+  
+
+  init(keyAS_recvd) := FALSE;
+  next(keyAS_recvd) := case
+	req_S = req_keyAS & S_ack_A = send_keyA : TRUE;
+	TRUE : keyAS_recvd;
+	esac;
+
+  init(keyAB_recvd) := FALSE;
+  next(keyAB_recvd) := case
+	keyAS_recvd & S_ack_A = send_cipher : TRUE;
+	next(times) = sess_max  : FALSE;
+	TRUE : keyAB_recvd;
+	esac;
+
+
+  init(active) := FALSE;
+  next(active) := case
+	next(times) = 3 : FALSE;
+	keyAB_recvd & B_ack_A = authenticated : TRUE;
+	TRUE : active;
+	esac;
+
+  init(times) := 0;
+  next(times) := case
+	!active : 0;
+	active & times = 3 : 3;
+	active : times +1;
+   esac;
+
+  init(Sess_count) := 0;
+  next(Sess_count) := case
+	!active & next(active) & Sess_count = sess_max  : sess_max ;
+	!active & next(active) & Sess_count < sess_max  : Sess_count + 1;
+	TRUE: Sess_count;
+   esac;
+
+init(req_B) := null;
+next(req_B) := case
+  req_B = null & keyAS_recvd & keyAB_recvd : init_B;
+  req_B = init_B & keyAB_recvd & B_ack_A = authenticated : send_dataA;
+  !next(keyAB_recvd) : null;
+  TRUE: req_B;
+esac;
+
+  -- Counter for receiving a key from authserver
+init(receive_key_S) := 0;
+next(receive_key_S) := case
+	keyAB_recvd & receive_key_S<count_max: receive_key_S+ 1;
+	TRUE : receive_key_S;
+esac;
+
+  --Counter for starting a session with server
+init(begin_init_B) := 0;
+next(begin_init_B) := case
+  req_B = init_B & begin_init_B<count_max: begin_init_B + 1;
+  TRUE : begin_init_B;
+esac;
+
+  --Counter for sending key to server
+init(send_key_B) := 0;
+next(send_key_B) := case
+  req_B = init_B & send_key_B<count_max: send_key_B + 1;
+  TRUE : send_key_B;
+esac;
+
+  --Counter for receiving a response from server
+init(begin_res_B) := 0;
+next(begin_res_B ) := case
+  req_B = send_dataA & begin_res_B<count_max: begin_res_B + 1;
+  TRUE : begin_res_B;
+esac;
+
+  init(send_key_i) := 0;
+  next(send_key_i) := case
+	req_B = init_B & B_ack_A != authenticated & send_key_i<count_max: send_key_i +1;
+	TRUE : send_key_i;
+  esac;
+  --State transitions of client
+  --init(status) := idle;
+  --next(status) :=
+   --case
+    --req_S = req_keyAS : send_S;
+    --status = send_S & keyAB_recvd : receive_S;
+    --status = receive_S & req_B = init_B : send_B;
+    --status = send_B & B_ack_A = authenticated : authenticated;
+    --state = authenticated & !B_ack_A: idle;
+    --TRUE : state;
+   --esac;
+
+FAIRNESS 
+running
+
+-----------------------------------------------------------
+--Server B Process
+-----------------------------------------------------------
+MODULE server(S_ack_B, A_req_B)
+VAR
+  --state : {idle, receive_A, send_A, receive_i, send_i};
+  S_req : boolean;
+  ack_A : {null, authenticated, send_dataB};
+  keyBS_recvd : boolean;
+  keyAB_recvd : boolean;
+  active : boolean;
+  times : {0,1,2,3};
+  Sess_count : {0,1,2};
+  end_init_A: 0..21;
+  end_res_A: 0..21;
+  receive_key_A: 0..21;
+  
+DEFINE
+	sess_max := 2;
+	count_max := 21;
+ASSIGN
+  
+  --counter for sessions B ended as an initiator to A
+init(end_init_A):= 0;
+next(end_init_A) := case
+  ack_A = authenticated & end_init_A<count_max: end_init_A+ 1;
+  TRUE : end_init_A;
+esac; 
+
+  --counter for sessions B ended as a responder to A
+init(end_res_A):= 0;
+next(end_res_A) := case
+  ack_A = authenticated & end_res_A<count_max: end_res_A+ 1;
+  TRUE : end_res_A;
+esac;
+
+init(receive_key_A):= 0;
+next(receive_key_A) := case
+  keyAB_recvd & receive_key_A<count_max: receive_key_A + 1;
+  TRUE : receive_key_A;
+esac;
+
+  --S_req is a boolean value for requesting keyBS from S
+  --if request has not been made to S and key BS has not been received, then TRUE
+  --if request has been made and key BS is received in next state, then reset to FALSE
+
+init(S_req) := FALSE;
+next(S_req) := case
+	!S_req & !next(keyBS_recvd) : TRUE;
+	S_req & next(keyBS_recvd)	  : FALSE;
+	TRUE : S_req;
+esac;
+
+  --keyBS_recvd is used to check for the session decryption key
+  --if requeat has been made and authServer has sent keyB then TRUE  
+
+  init(keyBS_recvd) := FALSE;
+  next(keyBS_recvd) := case
+	S_req & S_ack_B = send_keyB : TRUE;
+	TRUE : keyBS_recvd;
+	esac;
+
+  --if keyBS has been received and client has initiated session with server then TRUE
+
+  init(keyAB_recvd) := FALSE;
+  next(keyAB_recvd) := case
+	keyBS_recvd & A_req_B = init_B : TRUE;
+	next(times) = 3 : FALSE;
+	TRUE : keyAB_recvd;
+  esac;
+  
+  init(ack_A) := null;
+  next(ack_A) := case
+	ack_A = null & keyBS_recvd & keyAB_recvd : authenticated;
+	ack_A = authenticated & next(keyAB_recvd) & A_req_B = send_dataA : send_dataB;
+	!next(keyAB_recvd) : null;
+	TRUE : ack_A;
+  esac;
+
+  init(times) := 0;
+  next(times) := case
+	!active : 0;
+	active & times = 3 : 3;
+	active : times +1;
+	TRUE: times;
+  esac;
+
+  init(active) := FALSE;
+  next(active) := case
+	times = 3 : FALSE;
+	keyAB_recvd & next(A_req_B) = send_dataA : TRUE;
+	TRUE : active;
+  esac;
+
+  init(Sess_count) := 0;
+  next(Sess_count) := case
+	!active & next(active) & Sess_count = sess_max  : sess_max ;
+	!active & next(active) & Sess_count <sess_max  : Sess_count +1;
+	TRUE : Sess_count;
+  esac;
+ 
+  --init(state) := idle;
+  --next(state) :=
+  -- case
+   -- state=idle & A_req_B & !i_exists: receive_A;
+   -- state=receive_A : {receive_A, send_A};
+   -- state=send_A & i_req_B : receive_i;
+   -- state=receive_i : {receive_i, send_i};
+   -- state=send_A & !A_req_B : idle;
+   -- TRUE : state;
+   --esac;
+  --ack_i := (state = send_i);
+	FAIRNESS
+	running
+
+--Module for S process
+MODULE auth_server(A_req_S, A_recvd, B_req_S)
+VAR
+	status : {idle, send_keyA, send_keyB, send_cipher};
+	send_key_A : 0..21;
+	send_key_i : 0..21;
+DEFINE 
+	count_max := 21;
+ASSIGN
+
+	--the number of times that S sends key to A
+init(send_key_A ) := 0;
+next(send_key_A ) := case
+  status=send_cipher & send_key_A <count_max: send_key_A + 1;
+  TRUE : send_key_A ;
+esac;
+
+init(send_key_i) := 0;
+next(send_key_i) := case
+  status = send_cipher & !A_recvd & send_key_i<count_max: send_key_i + 1;
+  TRUE : send_key_i;
+esac;
+
+
+init(status) := idle;
+next(status) := case
+  status = idle & A_req_S = req_keyAS & !B_req_S : send_keyA;
+  status = idle & A_req_S = req_keyAB & !B_req_S : send_cipher;
+  status = idle & A_req_S = req_keyAS & B_req_S : {send_keyA, send_keyB};
+  status = idle & A_req_S = req_keyAB & B_req_S : send_keyB;
+  status = idle & A_req_S = null 	    & B_req_S : send_keyB;
+  status = send_keyA & A_req_S = req_keyAS & B_req_S : send_keyB;
+  status = send_keyB & A_req_S = req_keyAS & B_req_S : send_keyA;
+  status = send_keyB & A_req_S = req_keyAB & B_req_S : send_cipher;
+  TRUE : idle;
+esac;
+
+FAIRNESS
+running
+	
+MODULE intruder(A_req_B, B_ack_A, S_state)
+VAR 
+	state : {idle, eavesdrop, remove, generate, store};
+	keyAS_recvd : boolean;
+	keyBS_recvd : boolean;
+	keyAB_recvd : boolean;
+	comprA : boolean;
+	comprB : boolean;
+	client_eaves : {null, authenticated, send_dataB};
+	server_eaves : {null, init_B, send_dataA};
+	times : {0,1,2,3};
+	active : boolean;
+	receive_key_A : 0..21;
+	receive_key_S : 0..21;
+DEFINE
+	count_max := 21;
+ASSIGN
+
+init(receive_key_A ) := 0;
+next(receive_key_A) := case
+  A_req_B = init_B & keyAB_recvd & receive_key_A<count_max: receive_key_A +1;
+  TRUE : receive_key_A;
+esac;
+
+init(receive_key_S ) := 0;
+next(receive_key_S) := case
+  keyAB_recvd & receive_key_S<count_max: receive_key_S + 1;
+  TRUE : receive_key_S;
+esac;
+	
+init(keyAS_recvd) := FALSE;
+next(keyAS_recvd) := case
+	S_state = send_keyA : {TRUE, FALSE};
+	TRUE : keyAS_recvd;
+esac;
+
+init(keyBS_recvd) := FALSE;
+next(keyBS_recvd) := case
+	S_state = send_keyB : {TRUE, FALSE};
+	TRUE : keyBS_recvd;
+esac;
+
+init(keyAB_recvd) := FALSE;
+next(keyAB_recvd) := case
+	keyAS_recvd & S_state = send_cipher : {TRUE, FALSE};
+	next(times) = 3 : FALSE;
+	TRUE : keyAB_recvd;
+esac;
+
+init(client_eaves) := null;
+next(client_eaves) := case
+  next(B_ack_A) = authenticated & keyBS_recvd & keyAB_recvd : authenticated;
+  next(B_ack_A) = send_dataB & keyBS_recvd & keyAB_recvd : send_dataB;
+  !next(keyAB_recvd) : null;
+  TRUE : client_eaves;
+esac;
+
+init(server_eaves) := null;
+next(server_eaves) := case
+  next(A_req_B) = init_B & keyAS_recvd & keyAB_recvd : init_B;
+  next(A_req_B) = send_dataA & keyAS_recvd & keyAB_recvd : send_dataA;
+  !next(keyAB_recvd) : null;
+  TRUE : server_eaves;
+esac; 
+
+init(comprA) := FALSE;
+next(comprA) := case
+  next(A_req_B) = send_dataA & keyAB_recvd: TRUE;
+  TRUE : comprA;
+esac;
+
+init(comprB) := FALSE;
+next(comprB) := case
+  next(B_ack_A) = send_dataB  & keyAB_recvd: TRUE;
+  TRUE : comprB;
+esac;
+
+init(times) := 0;
+next(times) := case
+	!active : 0;
+	active & times = 3 : 3;
+	active : times +1;
+	TRUE : times;
+esac;
+
+init(active) := FALSE;
+next(active) := case
+	times = 3 : FALSE;
+	keyAB_recvd & next(A_req_B) = send_dataA : TRUE;
+	TRUE : active;
+esac;
+
+init(state) := idle;
+next(state) := case
+	keyAB_recvd : eavesdrop;
+	state = eavesdrop & (comprA | comprB) : {store, remove, generate};
+	   -- state = eavesdrop & B_ack_A : remove;
+	   -- state = generate | state = store : send_B;
+	   -- state = send_B & B_ack_i : receive_B;
+	 state = generate | state = remove: idle;
+	 TRUE : state;
+esac;
+	--req_B := (state=send_B);
+	FAIRNESS 
+	running
+
+MODULE main
+VAR
+intrud_exists : boolean;
+A1 : process client(S1.status, B1.ack_A);
+B1 : process server(S1.status, A1.req_B);
+S1 : process auth_server(A1.req_S, A1.keyAB_recvd, B1.S_req);
+-----------------------------------------------------------
+--A2 : process client(S2.status, B2.ack_A);
+--B2 : process server(S2.status, A2.req_B);
+--S2 : process auth_server(A2.req_S, A2.keyAB_recvd, B2.S_req);
+--Intrud : process intruder(A2.req_B, B2.ack_A, S2.status);
+
+ASSIGN
+init(intrud_exists) := FALSE;
+next(intrud_exists) := 
+		case
+		intrud_exists = FALSE : {TRUE, FALSE};
+		TRUE: intrud_exists;
+esac;
+
+--SPEC AG (c.req -> AF s.ack)
+--FAIRNESS (c.req -> s.ack)

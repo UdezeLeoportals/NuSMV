@@ -1,0 +1,27 @@
+MODULE main
+VAR
+  action : {a1,a2,a3,a4};
+  location : {s0,s1,s2,s3,s4};
+ASSIGN
+  init(location) := s0;
+  next(location) := case
+                 location = s0 & action = a1 : s1;
+                 location = s1 & action = a2 : s2;
+                 location = s1 & action = a3 : s3;
+                 location = s2 & action = a2 : s4;
+                 location = s2 & action = a4 : s3;
+                 location = s3 & action = a1 : s3;
+                 location = s3 & action = a2 : s1;
+                 TRUE : location;
+                    esac;
+
+  init(action) := a1;
+  next(action) := case
+                 location = s0 : {a2,a3};
+                 location = s1 & action = a2 : {a2, a4}; 
+                 location = s1 & action = a3 : {a1,a2};
+                 location = s3 & action = a1 : {a1,a2};
+                 location = s3 & action = a2 : {a2, a3};
+			 location = s2 & action = a4 : {a1, a2};
+                 TRUE : action;
+                  esac;

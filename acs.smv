@@ -1,0 +1,44 @@
+MODULE client (ack)
+VAR
+  state : {idle, requesting};
+  req : boolean;
+
+ASSIGN
+  init(state) := idle;
+  next(state) :=
+   case
+    state=idle : {idle, requesting};
+    state=requesting & ack : {idle, requesting};
+    TRUE : state;
+   esac;
+
+  req := (state=requesting);
+
+
+
+MODULE server (req)
+
+VAR
+  state : {idle, pending, acking};
+  ack : boolean;
+
+ASSIGN
+  next(state) :=
+   case
+    state=idle & req : pending;
+    state=pending : {pending, acking};
+    state=acking & req : pending;
+    state=acking & !req : idle;
+    TRUE : state;
+   esac;
+
+  ack := (state = acking);
+
+
+MODULE main
+VAR
+  c : process client(s.ack);
+  s : process server(c.req);
+
+SPEC AG (c.req -> AF s.ack)
+---FAIRNESS (c.req -> s.ack)

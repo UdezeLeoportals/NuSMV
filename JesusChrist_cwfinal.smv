@@ -1,0 +1,377 @@
+
+
+MODULE auth_server (A_request,ClientKABrecvd, B_request)
+
+VAR
+
+status:{await,send_keyAS,send_keyBS,send_cipher};
+send_key_i : 0..7;
+send_key_A : 0..7;
+
+ASSIGN
+
+init(send_key_i) := 0;
+next(send_key_i) := case
+  status = send_cipher & ClientKABrecvd = FALSE & send_key_i<7: send_key_i + 1;
+  TRUE : send_key_i;
+esac;
+
+init(send_key_A ) := 0;
+next(send_key_A ) := case
+  status=send_cipher & send_key_A <7: send_key_A + 1;
+  TRUE : send_key_A ;
+esac;
+
+init(status) := await;
+next(status) := case
+  status = await & A_request = req_keyAS & B_request = req_keyBS: {send_keyAS,send_keyBS};
+  status = send_keyAS & A_request = req_keyAS & B_request = req_keyBS: {send_keyBS};
+  status = send_keyBS & A_request = req_keyAS & B_request = req_keyBS: {send_keyAS};
+  status = send_keyBS & A_request = req_keyAB & B_request = req_keyBS: {send_cipher};
+  status = await & A_request = req_keyAB & B_request = req_keyBS: {send_keyBS};
+  status = await & A_request = req_keyAS & B_request = null: {send_keyAS};
+  status = await & A_request = req_keyAB & B_request = null: {send_cipher};
+  status = await & A_request = null       & B_request = req_keyBS: {send_keyBS};
+  TRUE : await;
+esac;
+
+FAIRNESS
+running
+
+--------------------------------------------------------------------------
+--------------------------------------------------------------------------
+--                                                                      --
+--      CLIENT MODULE - RECEIVES COMMS FROM AUTH AND SERVER             --
+--                                                                      --
+--------------------------------------------------------------------------
+--------------------------------------------------------------------------
+
+MODULE Client (auth_status,server_status, Int_cli_intrusn)
+
+VAR
+
+current_sessn: {null,activated};
+request_authserver : {null,req_keyAS,req_keyAB};
+request_B : {null,init_sessB,sendDataA};
+receivd_keyAS : boolean;
+receivd_keyAB : boolean;
+session_length : {0,1,2,3,4,5};
+count_sessn: {0,1,2,3};
+begin_init_B : 0..7;
+begin_res_B : 0..7;
+send_key_i : 0..7;
+receive_key_S : 0..7;
+send_key_B : 0..7;
+
+ASSIGN
+
+init(begin_init_B) := 0;
+next(begin_init_B) := case
+  session_length = 1 & begin_init_B<7: begin_init_B + 1;
+  count_sessn = 3: 0;
+  TRUE : begin_init_B;
+esac;
+
+
+init(begin_res_B) := 0;
+next(begin_res_B ) := case
+  request_B=sendDataA & begin_res_B<7: begin_res_B + 1;
+  TRUE : begin_res_B;
+esac;
+
+  init(send_key_i) := 0;
+  next(send_key_i) := case
+	  request_B=init_sessB & server_status=null & send_key_i<7: send_key_i +1;
+	TRUE : send_key_i;
+esac;
+
+init(receive_key_S) := 0;
+next(receive_key_S) := case
+	receivd_keyAB  & receive_key_S<7 : receive_key_S+ 1;
+	TRUE : receive_key_S;
+esac;
+
+  --Counter for sending key to server
+init(send_key_B) := 0;
+next(send_key_B) := case
+  request_B = init_sessB & receivd_keyAB=TRUE & send_key_B<7: send_key_B + 1;
+  TRUE : send_key_B;
+esac;
+
+init(request_authserver) := null;
+next(request_authserver) := case
+  request_authserver = null & next(receivd_keyAS)=FALSE       : req_keyAS;
+  request_authserver = null & next(receivd_keyAB)=FALSE & count_sessn !=3   : req_keyAB;
+  request_authserver = null & next(receivd_keyAB)=FALSE & count_sessn  =3   : null;
+  request_authserver = req_keyAS & next(receivd_keyAS) = TRUE & count_sessn !=3 : req_keyAB;
+  request_authserver = req_keyAS & next(receivd_keyAS) = TRUE & count_sessn  =3 : null;
+  request_authserver = req_keyAB & next(receivd_keyAB) = TRUE  : null;
+  TRUE:request_authserver;
+esac;
+
+init(receivd_keyAS) := FALSE;
+next(receivd_keyAS) := case
+  request_authserver = req_keyAS & auth_status = send_keyAS: TRUE;
+  TRUE : receivd_keyAS;
+esac;
+
+init(receivd_keyAB) := FALSE;
+next(receivd_keyAB) := case
+  receivd_keyAS=TRUE & auth_status = send_cipher: TRUE;
+  next(session_length) = 5 : FALSE;
+  TRUE : receivd_keyAB;
+esac;
+
+init (request_B) := null;
+next (request_B) := case
+  request_B=null & receivd_keyAS=TRUE & receivd_keyAB=TRUE : init_sessB;
+  request_B=init_sessB & receivd_keyAB=TRUE & server_status=authenticated : sendDataA;
+  next(receivd_keyAB)=FALSE : null;
+  TRUE: request_B;
+esac;
+
+init (session_length) := 0;
+next (session_length) := case
+    current_sessn = null:0;
+    current_sessn = activated & session_length = 5: 5;
+    current_sessn = activated: session_length + 1;
+    TRUE: session_length;
+esac;
+
+--variable to check whether session is active or not
+init (current_sessn) := null;
+next (current_sessn) := case
+  next(session_length) = 5 : null;
+  receivd_keyAB=TRUE & server_status=authenticated : activated;
+  TRUE: current_sessn;
+esac;
+
+
+init (count_sessn) := 0;
+next (count_sessn) := case
+  current_sessn = null & next(current_sessn) = activated & count_sessn = 3: 3;
+  current_sessn = null & next(current_sessn) = activated: count_sessn+1;
+  TRUE: count_sessn;
+esac;
+
+FAIRNESS
+running
+
+--      SERVER MODULE - RECEIVES COMMS FROM AUTH AND CLIENT             --
+--                                                                     
+
+MODULE Server (auth_status,client_status, serve_intrusn)
+
+VAR
+
+current_sessn: {null,activated};
+request_authserver : {null,req_keyBS};
+request_A: {null,authenticated,send_dataB};
+receivd_keyBS : boolean;
+receivd_keyAB : boolean;
+session_length : {0,1,2,3,4,5};
+count_sessn: {0,1,2,3};
+end_res_A : 0..7;
+end_init_A : 0..7;
+receive_key_A: 0..7;
+
+ASSIGN
+
+init(end_res_A):= 0;
+next(end_res_A) := case
+  request_A=authenticated  & end_res_A<7: end_res_A+ 1;
+  count_sessn=3 : 0;
+  TRUE : end_res_A;
+esac;
+
+init(end_init_A):= 0;
+next(end_init_A) := case
+  request_A = send_dataB & end_init_A<7: end_init_A+ 1;
+  TRUE : end_init_A;
+esac; 
+
+init(receive_key_A):= 0;
+next(receive_key_A) := case
+  receivd_keyAB & receive_key_A<7: receive_key_A + 1;
+  TRUE : receive_key_A;
+esac;
+
+init(request_authserver) := null;
+next(request_authserver) := case
+  request_authserver = null & next(receivd_keyBS)=FALSE:req_keyBS;
+  request_authserver = req_keyBS & next(receivd_keyBS)=TRUE:null;
+  TRUE:request_authserver;
+esac;
+
+init(receivd_keyBS) := FALSE;
+next(receivd_keyBS) := case
+  request_authserver = req_keyBS & auth_status = send_keyBS: TRUE;
+  TRUE : receivd_keyBS;
+esac;
+
+
+init(receivd_keyAB) := FALSE;
+next(receivd_keyAB) := case
+  receivd_keyBS=TRUE & (client_status = init_sessB | serve_intrusn =init_sessB ): TRUE;
+  next(session_length) = 5 : FALSE;
+  TRUE : receivd_keyAB;
+esac;
+
+init (request_A) := null;
+next (request_A) := case
+  request_A=null & receivd_keyBS=TRUE & receivd_keyAB=TRUE : authenticated;
+  request_A=authenticated & next(receivd_keyAB)=TRUE & client_status=sendDataA : send_dataB;
+  next(receivd_keyAB)=FALSE : null;
+  TRUE: request_A;
+esac;
+
+init (session_length) := 0;
+next (session_length) := case
+    current_sessn = null:0;
+    current_sessn = activated & session_length = 5: 5;
+    current_sessn = activated: session_length + 1;
+    TRUE: session_length;
+esac;
+
+init (current_sessn) := null;
+next (current_sessn) := case
+  session_length = 5 : null;
+  receivd_keyAB=TRUE & next(client_status)=sendDataA : activated;
+  TRUE: current_sessn;
+esac;
+
+init (count_sessn) := 0;
+next (count_sessn) := case
+  current_sessn = null & next(current_sessn) = activated & count_sessn = 3: 3;
+  current_sessn = null & next(current_sessn) = activated: count_sessn+1;
+
+  TRUE: count_sessn;
+esac;
+
+FAIRNESS
+running
+
+
+--      INTRUDER MODULE - EAVESDROPS CLIENT AND SERVER  
+
+MODULE Intruder (auth_status, client_status, server_status)
+
+VAR
+
+receivd_keyAS : boolean;
+receivd_keyBS : boolean;
+receivd_keyAB : boolean;
+
+Eavesdrop_A : boolean;
+Eavesdrop_B : boolean;
+
+client_intrusion: {null,authenticated,send_dataB};
+server_intrusion: {null,init_sessB,sendDataA};
+session_length: {0,1,2,3,4,5};
+current_sessn: {null,activated};
+receive_key_A : 0..7;
+receive_key_S : 0..7;
+ASSIGN
+
+init(receive_key_A ) := 0;
+next(receive_key_A) := case
+  client_status = init_sessB & receivd_keyAB & receive_key_A<7: receive_key_A +1;
+  TRUE : receive_key_A;
+esac;
+
+init(receive_key_S ) := 0;
+next(receive_key_S) := case
+  receivd_keyAB & receive_key_S<7: receive_key_S + 1;
+  TRUE : receive_key_S;
+esac;
+
+
+init(receivd_keyAS) := FALSE;
+next(receivd_keyAS) := case
+  auth_status = send_keyAS : {TRUE,FALSE};
+  TRUE : receivd_keyAS;
+esac;
+
+
+init(receivd_keyBS) := FALSE;
+next(receivd_keyBS) := case
+  auth_status = send_keyBS : {TRUE,FALSE};
+  TRUE : receivd_keyBS;
+esac;
+
+
+init(receivd_keyAB) := FALSE;
+next(receivd_keyAB) := case
+  receivd_keyAS=TRUE & auth_status = send_cipher : {TRUE,FALSE};
+  next(session_length) = 5 : FALSE;
+  TRUE : receivd_keyAB;
+esac;
+
+
+init(client_intrusion) := null;
+next(client_intrusion) := case
+  client_status=init_sessB & receivd_keyBS=TRUE & receivd_keyAB=TRUE : authenticated;
+  client_intrusion=authenticated & next(receivd_keyAB)=TRUE & client_status=sendDataA : send_dataB;
+  next(receivd_keyAB)=FALSE : null;
+  TRUE: client_intrusion;
+esac;
+
+init (server_intrusion) := null;
+next (server_intrusion) := case
+  server_intrusion=null & receivd_keyAS=TRUE & receivd_keyAB=TRUE : init_sessB;
+  server_intrusion=init_sessB & receivd_keyAB=TRUE & server_status=authenticated : sendDataA;
+  next(receivd_keyAB)=FALSE : null;
+  TRUE: server_intrusion;
+esac;
+
+init(Eavesdrop_A) := FALSE;
+next(Eavesdrop_A) := case
+  next(client_status) = sendDataA & receivd_keyAS & receivd_keyAB: TRUE;
+  TRUE : Eavesdrop_A;
+esac;
+
+
+init(Eavesdrop_B) := FALSE;
+next(Eavesdrop_B) := case
+  next(server_status) = send_dataB & receivd_keyBS & receivd_keyAB: TRUE;
+  TRUE : Eavesdrop_B;
+esac;
+
+init (session_length) := 0;
+next (session_length) := case
+    current_sessn = null:0;
+    current_sessn = activated & session_length = 5: 5;
+    current_sessn = activated: session_length + 1;
+    TRUE: session_length;
+esac;
+
+init (current_sessn) := null;
+next (current_sessn) := case
+  session_length = 5 : null;
+  receivd_keyAB=TRUE & next(client_status)=sendDataA : activated;
+  TRUE: current_sessn;
+esac;
+
+FAIRNESS
+running
+
+MODULE main
+
+VAR
+
+
+auth2 : process auth_server(cli2.request_authserver, cli2.receivd_keyAB, serv2.request_authserver);
+
+cli2 : process Client(auth2.status, serv2.request_A, int.client_intrusion);
+
+serv2 : process Server(auth2.status, cli2.request_B, int.server_intrusion);
+
+int :  process Intruder(auth2.status, cli2.request_B, serv2.request_A);
+
+--AUTHENTICATION AND SECRECY CTL
+--check_ctlspec -p "AG(cli2.begin_init_B >= serv2.end_res_A)"
+--check_ctlspec -p "EG(cli2.begin_res_B >= serv2.end_init_A)"
+--check_ctlspec -p "AF(cli2.send_key_i >= int.receive_key_A)"
+--check_ctlspec -p "AF(auth2.send_key_i >= int.receive_key_S)"
+--check_ctlspec -p "AG(auth2.send_key_A >= cli2.receive_key_S)"
+--check_ctlspec -p "AG(cli2.send_key_B >= serv2.receive_key_A)"

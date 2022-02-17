@@ -1,0 +1,16 @@
+MODULE lightStatus(statusOfotherLight)
+VAR
+status : {red, amber, green};
+ASSIGN
+init(status) := red;
+next(status) := case
+ status = red & statusOfotherLight = red : {red, amber};
+ status = amber : green;
+ status = green : {green, red};
+ TRUE : status;
+esac; 
+
+MODULE main
+VAR
+tln : process lightStatus(tlw.status);
+tlw : process lightStatus(tln.status);

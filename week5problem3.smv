@@ -1,0 +1,26 @@
+MODULE main
+VAR
+  action : {start,restart,wait,send,stop};
+  location : {ready,try,success,fail};
+ASSIGN
+  init(location ) := ready;
+  next(location ) := case
+     location  = ready & action = start   : try;
+     location  = try & action = wait : try;
+     location  = try & action = send : {success, fail};
+     location  = success & action = stop : success;
+     location  = fail & action = restart : ready;
+     TRUE : location ;
+                 esac;
+
+  
+  init(action) := start;
+  next(action) := case
+     location  = ready & action = start : {wait,send};
+     location  = try & action = wait : {wait, send};
+     location  = try & action = send & next(location ) = fail : restart;
+     location  = try & action = send & next(location ) = success : stop;
+     location  = success & action = stop : stop;
+     location  = fail & action = restart : start;
+     TRUE : action;
+                  esac;

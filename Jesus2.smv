@@ -1,0 +1,10 @@
+MODULE main
+VAR
+  status : {poor, rich, middleclass};
+ASSIGN
+  init(status) := poor;
+  next(status) := case
+                   status = poor : {middleclass, rich};
+			   status = rich : {poor, middleclass};
+			   TRUE : {poor, rich};
+                 esac;

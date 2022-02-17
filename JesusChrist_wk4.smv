@@ -1,0 +1,30 @@
+MODULE main
+VAR
+  action : {start, restart, send, wait, stop};
+  state : {s0, s1, s2, s3};
+ASSIGN
+  init(state) := s0;
+  next(state) := case
+                   state = s0 : s1;
+			   state = s1 & action = wait : s1;
+			   state = s1 & action = send : {s2, s3};
+			   state = s2 & action = restart : s0;
+			   state = s3 & action = stop : s3;   
+                   TRUE : state;
+                 esac;
+   init(action) := start;
+   next(action) := case
+	state = s0 & action = start : {send, wait};	
+	state = s1 & action = wait : {send, wait};
+	state = s1 & action = send & next(state) = s2 : restart;
+	state = s1 & action = send & next(state) = s3: stop;
+	state = s2 & action = restart : start;
+	state = s3: stop;
+	TRUE : action;
+		    esac;
+	DEFINE
+		ready := state = s0;
+		try := state = s1;
+		success := state = s3;
+		fail := state = s2;
+

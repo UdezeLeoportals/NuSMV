@@ -1,0 +1,425 @@
+
+--------------------------------------------------------------------------
+--------------------------------------------------------------------------
+--                                                                      --
+--     GWYN WILKINSON - IMPLEMENTATION OF KERBEROS PROTOCOL             --
+--      WITH SIMULATED MAN IN THE MIDDLE ATTACK                         --
+--      SUBMISSION DEADLINE - 6 DECEMBER 2017                           --
+--                                                                      --
+--------------------------------------------------------------------------
+--------------------------------------------------------------------------
+--------------------------------------------------------------------------
+--------------------------------------------------------------------------
+--                                                                      --
+--      AUTHSERVER MODULE - RECEIVES COMMS FROM CLIENT & SERVER         --
+--                                                                      --
+--------------------------------------------------------------------------
+--------------------------------------------------------------------------
+
+MODULE AuthServer (ClientRequest,ClientKABrecvd, ServerRequest)
+
+VAR
+
+state:{waiting,sendKAS,sendKBS,sendencrypted};
+send_key_i : 0..21;
+send_key_A : 0..21;
+
+ASSIGN
+
+init(send_key_i) := 0;
+next(send_key_i) := case
+  state = sendencrypted & ClientKABrecvd = FALSE & send_key_i<21: send_key_i + 1;
+  TRUE : send_key_i;
+esac;
+
+	--the number of times that S sends key to A
+init(send_key_A ) := 0;
+next(send_key_A ) := case
+  state=sendencrypted & send_key_A <21: send_key_A + 1;
+  TRUE : send_key_A ;
+esac;
+
+--state simply changes based on what requests we get from client and server processes
+init(state) := waiting;
+next(state) := case
+  state = waiting & ClientRequest = requestKAS & ServerRequest = requestKBS: {sendKAS,sendKBS};
+  state = sendKAS & ClientRequest = requestKAS & ServerRequest = requestKBS: {sendKBS};
+  state = sendKBS & ClientRequest = requestKAS & ServerRequest = requestKBS: {sendKAS};
+  state = sendKBS & ClientRequest = requestKAB & ServerRequest = requestKBS: {sendencrypted};
+  state = waiting & ClientRequest = requestKAB & ServerRequest = requestKBS: {sendKBS};
+  state = waiting & ClientRequest = requestKAS & ServerRequest = none: {sendKAS};
+  state = waiting & ClientRequest = requestKAB & ServerRequest = none: {sendencrypted};
+  state = waiting & ClientRequest = none       & ServerRequest = requestKBS: {sendKBS};
+  TRUE : waiting;
+esac;
+
+FAIRNESS
+running
+
+--------------------------------------------------------------------------
+--------------------------------------------------------------------------
+--                                                                      --
+--      CLIENT MODULE - RECEIVES COMMS FROM AUTH AND SERVER             --
+--                                                                      --
+--------------------------------------------------------------------------
+--------------------------------------------------------------------------
+
+MODULE Client (AuthState,CommFromServer, Int_KASrecvd, Int_KABrecvd)
+
+VAR
+
+session: {none,active};
+authrequest : {none,requestKAS,requestKAB};
+servrequest : {none,initsession,secretdatafromA};
+bKASreceived : boolean;
+bKABreceived : boolean;
+duration : {0,1,2,3,4,5};
+numsessions: {0,1,2,3};
+begin_init_B : 0..21;
+begin_res_B : 0..21;
+send_key_i : 0..21;
+receive_key_S : 0..21;
+send_key_B : 0..21;
+
+ASSIGN
+
+--Counter for starting a session with server when the session duration counter=1
+init(begin_init_B) := 0;
+next(begin_init_B) := case
+  servrequest = initsession & begin_init_B<21: begin_init_B + 1;
+  TRUE : begin_init_B;
+esac;
+
+--Counter for receiving a response from server
+init(begin_res_B) := 0;
+next(begin_res_B ) := case
+  CommFromServer=recognised & begin_res_B<21: begin_res_B + 1;
+  TRUE : begin_res_B;
+esac;
+
+  init(send_key_i) := 0;
+  next(send_key_i) := case
+	servrequest = initsession & ComFromServer != recognised & send_key_i<21: send_key_i +1;
+	TRUE : send_key_i;
+
+  -- Counter for receiving a key from authserver
+init(receive_key_S) := 0;
+next(receive_key_S) := case
+	bKABreceived & receive_key_S<21 : receive_key_S+ 1;
+	TRUE : receive_key_S;
+esac;
+
+  --Counter for sending key to server
+init(send_key_B) := 0;
+next(send_key_B) := case
+  servrequest = initsession & bKABreceived=TRUE & send_key_B<21: send_key_B + 1;
+  TRUE : send_key_B;
+esac;
+
+-- authrequest is a buffer sending signals to Auth Server S.
+init(authrequest) := none;
+next(authrequest) := case
+  authrequest = none & next(bKASreceived)=FALSE       : requestKAS;
+  authrequest = none & next(bKABreceived)=FALSE & numsessions !=3   : requestKAB;
+  authrequest = none & next(bKABreceived)=FALSE & numsessions  =3   : none;
+  authrequest = requestKAS & next(bKASreceived) = TRUE & numsessions !=3 : requestKAB;
+  authrequest = requestKAS & next(bKASreceived) = TRUE & numsessions  =3 : none;
+  authrequest = requestKAB & next(bKABreceived) = TRUE  : none;
+  TRUE:authrequest;
+esac;
+
+-- bKAS is A's secret key, needed to decrypt the session packet.
+init(bKASreceived) := FALSE;
+next(bKASreceived) := case
+  authrequest = requestKAS & AuthState = sendKAS & Int_KASrecvd = FALSE: TRUE;
+  TRUE : bKASreceived;
+esac;
+
+-- bKAB is the session key, needed to initiate the session with B.
+init(bKABreceived) := FALSE;
+next(bKABreceived) := case
+  bKASreceived=TRUE & AuthState = sendencrypted & Int_KABrecvd = FALSE: TRUE;
+  next(duration) = 5 : FALSE;
+  TRUE : bKABreceived;
+esac;
+
+-- servrequest is a buffer sending signals to server B
+init (servrequest) := none;
+next (servrequest) := case
+  servrequest=none & bKASreceived=TRUE & bKABreceived=TRUE : initsession;
+  servrequest=initsession & bKABreceived=TRUE & CommFromServer=recognised : secretdatafromA;
+  next(bKABreceived)=FALSE : none;
+  TRUE: servrequest;
+esac;
+
+-- duration is the length an active session can stay active before it is ended
+init (duration) := 0;
+next (duration) := case
+    session = none:0;
+    session = active & duration = 5: 5;
+    session = active: duration + 1;
+    TRUE: duration;
+esac;
+
+-- session is a state of whether we are in an active session or not.
+init (session) := none;
+next (session) := case
+  next(duration) = 5 : none;
+  bKABreceived=TRUE & CommFromServer=recognised : active;
+  TRUE: session;
+esac;
+
+--numsessions is a counter that limits the number of sessions we can run
+init (numsessions) := 0;
+next (numsessions) := case
+  session = none & next(session) = active & numsessions = 3: 3;
+  session = none & next(session) = active: numsessions+1;
+  TRUE: numsessions;
+esac;
+
+FAIRNESS
+running
+
+
+--------------------------------------------------------------------------
+--------------------------------------------------------------------------
+--                                                                      --
+--      SERVER MODULE - RECEIVES COMMS FROM AUTH AND CLIENT             --
+--                                                                      --
+--------------------------------------------------------------------------
+--------------------------------------------------------------------------
+
+MODULE Server (AuthState,CommFromClient, Int_KBSrecvd, Int_KABrecvd)
+
+VAR
+
+session: {none,active};
+authrequest : {none,requestKBS};
+clientrequest: {none,recognised,secretdatafromB};
+bKBSreceived : boolean;
+bKABreceived : boolean;
+duration : {0,1,2,3,4,5};
+numsessions: {0,1,2,3};
+end_res_A : 0..21;
+end_init_A : 0..21;
+receive_key_A: 0..21;
+
+ASSIGN
+--counter for sessions B ended as a responder to A
+init(end_res_A):= 0;
+next(end_res_A) := case
+  duration = 5 & end_res_A<21: end_res_A+ 1;
+  TRUE : end_res_A;
+esac;
+--counter for sessions B ended as an initiator to A
+init(end_init_A):= 0;
+next(end_init_A) := case
+  clientrequest = recognised & end_init_A<21: end_init_A+ 1;
+  TRUE : end_init_A;
+esac; 
+
+init(receive_key_A):= 0;
+next(receive_key_A) := case
+  bKABreceived & receive_key_A<21: receive_key_A + 1;
+  TRUE : receive_key_A;
+esac;
+
+-- authrequest is a buffer sending signals to Auth Server S.
+init(authrequest) := none;
+next(authrequest) := case
+  authrequest = none & next(bKBSreceived)=FALSE:requestKBS;
+  authrequest = requestKBS & next(bKBSreceived)=TRUE:none;
+  TRUE:authrequest;
+esac;
+
+-- bKBS is B's secret key, needed to decrypt the session packet.
+init(bKBSreceived) := FALSE;
+next(bKBSreceived) := case
+  authrequest = requestKBS & AuthState = sendKBS & Int_KBSrecvd = FALSE: TRUE;
+  TRUE : bKBSreceived;
+esac;
+
+-- bKAB is the session key, needed to initiate the session with B.
+init(bKABreceived) := FALSE;
+next(bKABreceived) := case
+  bKBSreceived=TRUE & CommFromClient = initsession & Int_KABrecvd = FALSE: TRUE;
+  next(duration) = 5 : FALSE;
+  TRUE : bKABreceived;
+esac;
+
+-- clientrequest is a buffer sending signals to server A
+init (clientrequest) := none;
+next (clientrequest) := case
+  clientrequest=none & bKBSreceived=TRUE & bKABreceived=TRUE : recognised;
+  clientrequest=recognised & next(bKABreceived)=TRUE & CommFromClient=secretdatafromA : secretdatafromB;
+  next(bKABreceived)=FALSE : none;
+  TRUE: clientrequest;
+esac;
+
+-- duration is the length an active session can stay active before it is ended
+init (duration) := 0;
+next (duration) := case
+    session = none:0;
+    session = active & duration = 5: 5;
+    session = active: duration + 1;
+    TRUE: duration;
+esac;
+
+-- session is a state of whether we are in an active session or not.
+init (session) := none;
+next (session) := case
+  duration = 5 : none;
+  bKABreceived=TRUE & next(CommFromClient=secretdatafromA) : active;
+  TRUE: session;
+esac;
+
+--numsessions is a counter that limits the number of sessions we can run
+init (numsessions) := 0;
+next (numsessions) := case
+  session = none & next(session) = active & numsessions = 3: 3;
+  session = none & next(session) = active: numsessions+1;
+
+  TRUE: numsessions;
+esac;
+
+FAIRNESS
+running
+
+--------------------------------------------------------------------------
+--------------------------------------------------------------------------
+--                                                                      --
+--      INTRUDER MODULE - IMPERSONATES CLIENT AND SERVER TO EACH OTHER  --
+--                                                                      --
+--------------------------------------------------------------------------
+--------------------------------------------------------------------------
+
+MODULE Intruder (AuthState, CommFromClient, CommFromServer)
+
+VAR
+
+bKASreceived : boolean;
+bKBSreceived : boolean;
+bKABreceived : boolean;
+
+bAisCompromised : boolean;
+bBisCompromised : boolean;
+
+IntruderToClient: {none,recognised,secretdatafromB};
+IntruderToServer: {none,initsession,secretdatafromA};
+duration: {0,1,2,3,4,5};
+session: {none,active};
+receive_key_A : 0..21;
+receive_key_S : 0..21;
+ASSIGN
+
+init(receive_key_A ) := 0;
+next(receive_key_A) := case
+  CommFromClient = initsession & bKABreceived & receive_key_A<count_max: receive_key_A +1;
+  TRUE : receive_key_A;
+esac;
+
+init(receive_key_S ) := 0;
+next(receive_key_S) := case
+  bKABreceived & receive_key_S<21: receive_key_S + 1;
+  TRUE : receive_key_S;
+esac;
+
+-- bKAS is A's secret key, needed to decrypt the session packet.
+-- Intruder simply listens for it and stores it when found.
+init(bKASreceived) := FALSE;
+next(bKASreceived) := case
+  AuthState = sendKAS : {TRUE,FALSE};
+  TRUE : bKASreceived;
+esac;
+
+-- bKBS is B's secret key, needed to decrypt the session packet.
+-- Intruder simply listens for it and stores it when found.
+init(bKBSreceived) := FALSE;
+next(bKBSreceived) := case
+  AuthState = sendKBS : {TRUE,FALSE};
+  TRUE : bKBSreceived;
+esac;
+
+-- bKAB is the session key, needed to initiate the session between A & B.
+-- Intruder can decrypt if it has eavesdropped KAS already.
+init(bKABreceived) := FALSE;
+next(bKABreceived) := case
+  bKASreceived=TRUE & AuthState = sendencrypted : {TRUE,FALSE};
+  next(duration) = 5 : FALSE;
+  TRUE : bKABreceived;
+esac;
+
+-- IntruderToClient forwards messages received from Server as long as we
+-- have the session key to decrypt them.
+init(IntruderToClient) := none;
+next(IntruderToClient) := case
+  next(CommFromServer)=recognised & bKBSreceived=TRUE & bKABreceived=TRUE : recognised;
+  next(CommFromServer)=secretdatafromB & bKBSreceived=TRUE & bKABreceived=TRUE : secretdatafromB;
+  next(bKABreceived)=FALSE : none;
+  TRUE: IntruderToClient;
+esac;
+
+-- IntruderToClient forwards messages received from Client as long as we
+-- have the session key to decrypt them.
+init (IntruderToServer) := none;
+next (IntruderToServer) := case
+  next(CommFromClient)=initsession & bKASreceived=TRUE & bKABreceived=TRUE : initsession;
+  next(CommFromClient)=secretdatafromA & bKASreceived=TRUE & bKABreceived=TRUE : secretdatafromA;
+  next(bKABreceived)=FALSE : none;
+  TRUE: IntruderToServer;
+esac;
+
+-- bAisCompromised is a flag to show that we have downloaded secret data from A
+init(bAisCompromised) := FALSE;
+next(bAisCompromised) := case
+  next(CommFromClient) = secretdatafromA & bKASreceived & bKABreceived: TRUE;
+  TRUE : bAisCompromised;
+esac;
+
+-- bBisCompromised is a flag to show that we have downloaded secret data from B
+init(bBisCompromised) := FALSE;
+next(bBisCompromised) := case
+  next(CommFromServer) = secretdatafromB & bKBSreceived & bKABreceived: TRUE;
+  TRUE : bBisCompromised;
+esac;
+
+-- duration is the length an active session can stay active before it is ended
+init (duration) := 0;
+next (duration) := case
+    session = none:0;
+    session = active & duration = 5: 5;
+    session = active: duration + 1;
+    TRUE: duration;
+esac;
+
+-- session is a state of whether we are in an active session or not.
+init (session) := none;
+next (session) := case
+  duration = 5 : none;
+  bKABreceived=TRUE & next(CommFromClient=secretdatafromA) : active;
+  TRUE: session;
+esac;
+
+FAIRNESS
+running
+
+MODULE main
+
+VAR
+
+-- auth, cli and serv show the protocol working without intruder interference.
+--auth : process AuthServer(cli.authrequest, cli.bKABreceived, serv.authrequest);
+
+--cli : process Client(auth.state, serv.clientrequest);
+
+--serv : process Server(auth.state, cli.servrequest);
+
+-- auth2, cli2 and serv2 show the protocol working while intruder sits between
+-- and intercepts, decrypts, and forwards their messages.
+auth2 : process AuthServer(cli2.authrequest, cli2.bKABreceived, serv2.authrequest);
+
+cli2 : process Client(auth2.state, serv.clientrequest, int.bKASreceived, int.bKABreceived);
+
+serv2 : process Server(auth2.state, cli.servrequest, int.bKBSreceived, int.bKABreceived);
+
+int :  process Intruder(auth2.state, cli2.servrequest, serv2.clientrequest);
